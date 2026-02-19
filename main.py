@@ -66,12 +66,24 @@ class SelectionCanvas:
     def __init__(self, root, img_name, callback):
         self.root = root
         self.callback = callback
-        self.mon = mss.mss().monitors[0]
-        self.primary_mon = mss.mss().monitors[1] if len(mss.mss().monitors) > 1 else self.mon
+        
+        # 获取游戏窗口所在的显示器
+        self.target_monitor = self.get_game_monitor()
+        
+        # 如果没有找到游戏窗口或游戏窗口不在任何显示器上，使用主显示器
+        if not self.target_monitor:
+            monitors = mss.mss().monitors
+            self.target_monitor = monitors[1] if len(monitors) > 1 else monitors[0]
+            print(f"未找到游戏窗口，使用主显示器: {self.target_monitor}")
+        
+        print(f"使用显示器: left={self.target_monitor['left']}, top={self.target_monitor['top']}, "
+              f"width={self.target_monitor['width']}, height={self.target_monitor['height']}")
 
         self.top = tk.Toplevel(root)
         self.top.attributes("-alpha", 0.6, "-topmost", True)
-        self.top.geometry(f"{self.mon['width']}x{self.mon['height']}+{self.mon['left']}+{self.mon['top']}")
+        # 只覆盖游戏所在的显示器
+        self.top.geometry(f"{self.target_monitor['width']}x{self.target_monitor['height']}+"
+                         f"{self.target_monitor['left']}+{self.target_monitor['top']}")
         self.top.overrideredirect(True)
         self.top.configure(bg="white")
         self.canvas = tk.Canvas(self.top, cursor="crosshair", bg="white", highlightthickness=0)
@@ -87,8 +99,9 @@ class SelectionCanvas:
             img.thumbnail((700, 500))
             self.tk_img = ImageTk.PhotoImage(img)
 
-            pos_x = self.primary_mon['left'] + (self.primary_mon['width'] - img.width) // 2
-            pos_y = self.primary_mon['top'] + (self.primary_mon['height'] - img.height) // 2
+            # 在目标显示器中央显示引导图
+            pos_x = self.target_monitor['left'] + (self.target_monitor['width'] - img.width) // 2
+            pos_y = self.target_monitor['top'] + (self.target_monitor['height'] - img.height) // 2
 
             self.img_win.geometry(f"{img.width}x{img.height}+{pos_x}+{pos_y}")
             tk.Label(self.img_win, image=self.tk_img, bg="white", relief="solid", bd=2).pack()
@@ -102,6 +115,45 @@ class SelectionCanvas:
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
         self.canvas.bind("<Button-3>", lambda e: self.close())
         self.top.bind("<Escape>", lambda e: self.close())
+
+    def get_game_monitor(self):
+        """获取游戏窗口所在的显示器"""
+        try:
+            # 查找游戏窗口
+            wins = gw.getWindowsWithTitle('Endfield') or gw.getWindowsWithTitle('终末地')
+            if not wins:
+                print("未找到游戏窗口")
+                return None
+            
+            hwnd = wins[0]._hWnd
+            
+            # 获取游戏窗口位置（使用 GetWindowRect 更可靠）
+            left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+            window_center_x = left + (right - left) // 2
+            window_center_y = top + (bottom - top) // 2
+            
+            print(f"游戏窗口: left={left}, top={top}, right={right}, bottom={bottom}")
+            
+            # 获取所有显示器
+            monitors = mss.mss().monitors
+            print("可用显示器:")
+            for i, mon in enumerate(monitors):
+                print(f"  monitor[{i}]: left={mon['left']}, top={mon['top']}, "
+                      f"width={mon['width']}, height={mon['height']}")
+            
+            # 找到包含窗口中心的显示器
+            for i, mon in enumerate(monitors[1:], 1):  # 跳过 monitors[0]（虚拟桌面）
+                if (mon['left'] <= window_center_x < mon['left'] + mon['width'] and
+                    mon['top'] <= window_center_y < mon['top'] + mon['height']):
+                    print(f"游戏窗口在显示器 {i} 上")
+                    return mon
+            
+            print("未找到包含游戏窗口的显示器")
+            return None
+            
+        except Exception as e:
+            print(f"获取游戏显示器失败: {e}")
+            return None
 
     def safe_destroy_img(self):
         if self.img_win and self.img_win.winfo_exists():
@@ -117,11 +169,14 @@ class SelectionCanvas:
         self.canvas.coords(self.rect, self.start_x, self.start_y, event.x, event.y)
 
     def on_release(self, event):
-        x1, x2, y1, y2 = min(self.start_x, event.x), max(self.start_x, event.x), min(self.start_y, event.y), max(
-            self.start_y, event.y)
+        x1, x2 = min(self.start_x, event.x), max(self.start_x, event.x)
+        y1, y2 = min(self.start_y, event.y), max(self.start_y, event.y)
         self.close()
         if (x2 - x1) > 10 and (y2 - y1) > 10:
-            self.callback(x1 + self.mon['left'], y1 + self.mon['top'], x2 - x1, y2 - y1)
+            # 转换为屏幕绝对坐标
+            screen_x = x1 + self.target_monitor['left']
+            screen_y = y1 + self.target_monitor['top']
+            self.callback(screen_x, screen_y, x2 - x1, y2 - y1)
 
     def close(self):
         self.safe_destroy_img()
@@ -144,7 +199,6 @@ class Matrixassistant:
     def load_weapon_csv(self):
         ws = []
         if not os.path.exists(self.csv_file):
-            # 添加更详细的调试信息
             print(f"当前工作目录: {os.getcwd()}")
             print(f"CSV文件路径: {self.csv_file}")
             print(f"文件是否存在: {os.path.exists(self.csv_file)}")
@@ -173,33 +227,81 @@ class Matrixassistant:
         json.dump(self.data, open(self.config_file, 'w', encoding='utf-8'), ensure_ascii=False, indent=4)
         self.update_config_status()
 
+    def get_game_window_rect(self):
+        """获取游戏窗口的位置（绝对坐标）"""
+        try:
+            wins = gw.getWindowsWithTitle('Endfield') or gw.getWindowsWithTitle('终末地')
+            if not wins: 
+                print("未找到游戏窗口")
+                return None
+            
+            hwnd = wins[0]._hWnd
+            # 使用 GetWindowRect 获取窗口在屏幕上的实际位置
+            left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+            print(f"游戏窗口位置: left={left}, top={top}, right={right}, bottom={bottom}")
+            return (left, top)
+        except Exception as e:
+            print(f"获取窗口位置失败: {e}")
+            return None
+
     def set_matrix_roi(self):
         SelectionCanvas(self.root, "guide_matrix.png",
-                        lambda x, y, w, h: [self.data.update({"matrix_size": (w, h)}), self.save_config()])
+                        lambda x, y, w, h: self._handle_matrix_roi_selection(x, y, w, h))
+
+    def _handle_matrix_roi_selection(self, x, y, w, h):
+        self.data.update({"matrix_size": (w, h)})
+        self.save_config()
 
     def set_roi(self):
-        SelectionCanvas(self.root, "guide_roi.png", lambda x, y, w, h: [
-            self.data.update({"roi": (x - self.get_game_rect()[0], y - self.get_game_rect()[1], w, h)}),
-            self.save_config()])
+        SelectionCanvas(self.root, "guide_roi.png", 
+                       lambda x, y, w, h: self._handle_roi_selection(x, y, w, h))
+
+    def _handle_roi_selection(self, x, y, w, h):
+        print(f"点击屏幕坐标: ({x}, {y})")
+        game_pos = self.get_game_window_rect()
+        print(f"游戏窗口左上角: {game_pos}")
+        rel_x = x - game_pos[0] if game_pos else x
+        rel_y = y - game_pos[1] if game_pos else y
+        print(f"相对坐标: ({rel_x}, {rel_y})")
+        self.data.update({"roi": (rel_x, rel_y, w, h)})
+        self.save_config()
 
     def set_grid(self):
-        def p3(rx, ry):
-            gx, gy = self.get_game_rect();
-            p11 = self.data["grid"]["p11"]
-            self.data["grid"].update(
-                {"rx": p11[0] - gx, "ry": p11[1] - gy, "rdx": self.data["grid"]["p12"][0] - p11[0], "rdy": ry - p11[1]})
-            self.save_config()
+        self.get_click("点：(1, 1)中心", self._handle_grid_p1, "guide_grid.png")
 
-        def p2(rx, ry): self.data["grid"]["p12"] = (rx, ry); self.get_click("点：(2, 1)中心", p3, None)
+    def _handle_grid_p1(self, rx, ry):
+        self.data["grid"] = {"p11": (rx, ry)}
+        self.get_click("点：(1, 2)中心", self._handle_grid_p2, None)
 
-        def p1(rx, ry): self.data["grid"] = {"p11": (rx, ry)}; self.get_click("点：(1, 2)中心", p2, None)
+    def _handle_grid_p2(self, rx, ry):
+        self.data["grid"]["p12"] = (rx, ry)
+        self.get_click("点：(2, 1)中心", self._handle_grid_p3, None)
 
-        self.get_click("点：(1, 1)中心", p1, "guide_grid.png")
+    def _handle_grid_p3(self, rx, ry):
+        game_pos = self.get_game_window_rect()
+        if not game_pos:
+            messagebox.showerror("错误", "未找到游戏窗口")
+            return
+        gx, gy = game_pos
+        p11 = self.data["grid"]["p11"]
+        self.data["grid"].update(
+            {"rx": p11[0] - gx, "ry": p11[1] - gy, 
+             "rdx": self.data["grid"]["p12"][0] - p11[0], 
+             "rdy": ry - p11[1]})
+        self.save_config()
 
     def set_lock(self):
-        self.get_click("点击锁定图标中心", lambda rx, ry: [
-            self.data.update({"lock": (rx - self.get_game_rect()[0], ry - self.get_game_rect()[1])}),
-            self.save_config()], "guide_lock.png")
+        self.get_click("点击锁定图标中心", self._handle_lock_selection, "guide_lock.png")
+
+    def _handle_lock_selection(self, rx, ry):
+        print(f"锁定图标屏幕坐标: ({rx}, {ry})")
+        game_pos = self.get_game_window_rect()
+        print(f"游戏窗口左上角: {game_pos}")
+        rel_x = rx - game_pos[0] if game_pos else rx
+        rel_y = ry - game_pos[1] if game_pos else ry
+        print(f"相对坐标: ({rel_x}, {rel_y})")
+        self.data.update({"lock": (rel_x, rel_y)})
+        self.save_config()
 
     def edit_weapon_popup(self):
         editor_win = tk.Toplevel(self.root)
@@ -481,7 +583,10 @@ class Matrixassistant:
                     if self.debug_gold_var.get() or self.is_gold(win_img[max(0, ry - int(ms[1] / 2)):ry + int(
                             ms[1] / 2), max(0, rx - int(ms[0] / 2)):rx + int(ms[0] / 2)]):
                         self.gui_log(f"--- 检查: {curr_row + 1}-{c + 1} ---");
-                        wr = self.get_game_rect()
+                        wr = self.get_game_window_rect()
+                        if not wr:
+                            self.gui_log("[错误] 无法获取游戏窗口位置", "red")
+                            break
                         pydirectinput.click(int(wr[0] + rx), int(wr[1] + ry));
                         time.sleep(spd)
                         scr = self.capture_window_bg(hwnd);
@@ -510,7 +615,10 @@ class Matrixassistant:
                 if not self.running: break
                 if curr_row >= 4:
                     self.gui_log(f"[翻页] 向上滑动 {dist} 像素...", "black");
-                    wr = self.get_game_rect()
+                    wr = self.get_game_window_rect()
+                    if not wr:
+                        self.gui_log("[错误] 无法获取游戏窗口位置", "red")
+                        break
                     sx, sy = int(wr[0] + grid["rx"] + 4 * grid["rdx"]), int(wr[1] + grid["ry"] + 4 * grid["rdy"])
                     pydirectinput.moveTo(sx, sy);
                     pydirectinput.mouseDown();
@@ -540,24 +648,38 @@ class Matrixassistant:
         if hasattr(k, 'char') and k.char == 'b' and self.running: self.gui_log("[停止] 任务已中止",
                                                                                "red"); self.running = False
 
-    def get_game_rect(self):
+    def get_click(self, p, cb, img_n=None):
+        # 获取游戏窗口所在的显示器
+        target_monitor = None
         try:
             wins = gw.getWindowsWithTitle('Endfield') or gw.getWindowsWithTitle('终末地')
-            if not wins: return None
-            hwnd, rect = wins[0]._hWnd, RECT();
-            ctypes.windll.dwmapi.DwmGetWindowAttribute(hwnd, 9, ctypes.byref(rect), ctypes.sizeof(rect))
-            return (rect.left, rect.top)
+            if wins:
+                hwnd = wins[0]._hWnd
+                left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+                window_center_x = left + (right - left) // 2
+                window_center_y = top + (bottom - top) // 2
+                
+                monitors = mss.mss().monitors
+                for mon in monitors[1:]:
+                    if (mon['left'] <= window_center_x < mon['left'] + mon['width'] and
+                        mon['top'] <= window_center_y < mon['top'] + mon['height']):
+                        target_monitor = mon
+                        break
         except:
-            return None
-
-    def get_click(self, p, cb, img_n=None):
-        mon = mss.mss().monitors[0]
-        primary_mon = mss.mss().monitors[1] if len(mss.mss().monitors) > 1 else mon
+            pass
+        
+        if not target_monitor:
+            monitors = mss.mss().monitors
+            target_monitor = monitors[1] if len(monitors) > 1 else monitors[0]
+        
+        # 创建覆盖层
         ov = tk.Toplevel(self.root);
         ov.attributes("-alpha", 0.6, "-topmost", True)
-        ov.geometry(f"{mon['width']}x{mon['height']}+{mon['left']}+{mon['top']}");
+        ov.geometry(f"{target_monitor['width']}x{target_monitor['height']}+{target_monitor['left']}+{target_monitor['top']}");
         ov.overrideredirect(True);
         ov.configure(bg="white")
+        
+        # 显示引导图
         img_w = None
         if img_n:
             img_path = resource_path(os.path.join("img", img_n))
@@ -568,8 +690,8 @@ class Matrixassistant:
                 pi = Image.open(img_path);
                 pi.thumbnail((700, 500));
                 tki = ImageTk.PhotoImage(pi)
-                pos_x = pos_x = primary_mon['left'] + (primary_mon['width'] - pi.width) // 2
-                pos_y = primary_mon['top'] + (primary_mon['height'] - pi.height) // 2
+                pos_x = target_monitor['left'] + (target_monitor['width'] - pi.width) // 2
+                pos_y = target_monitor['top'] + (target_monitor['height'] - pi.height) // 2
                 img_w.geometry(f"{pi.width}x{pi.height}+{pos_x}+{pos_y}")
                 tk.Label(img_w, image=tki, bg="white", relief="solid", bd=2).pack();
                 img_w.image = tki
@@ -583,7 +705,11 @@ class Matrixassistant:
         def onc(e):
             if img_w and img_w.winfo_exists(): img_w.destroy()
             ov.destroy();
-            cb(e.x_root, e.y_root)
+            # 转换为屏幕绝对坐标
+            screen_x = e.x_root
+            screen_y = e.y_root
+            print(f"点击屏幕坐标: ({screen_x}, {screen_y})")
+            cb(screen_x, screen_y)
 
         ov.bind("<Button-1>", onc);
         tk.Label(ov, text=p, font=("微软雅黑", 22, "bold"), fg="red", bg="white").pack(expand=True)
@@ -623,6 +749,16 @@ class Matrixassistant:
         self.data = self.load_config()
         self.weapon_list = self.load_weapon_csv()
         self.corrections = self.load_corrections()
+
+        # 打印显示器信息用于调试
+        monitors = mss.mss().monitors
+        print("=== 显示器信息 ===")
+        for i, mon in enumerate(monitors):
+            print(f"monitors[{i}]: left={mon['left']}, top={mon['top']}, "
+                  f"width={mon['width']}, height={mon['height']}")
+        
+        game_pos = self.get_game_window_rect()
+        print(f"游戏窗口位置: {game_pos}")
 
         # --- UI 颜色定义 ---
         MUTED_RED = "#B71C1C"  # 低饱和度红色
