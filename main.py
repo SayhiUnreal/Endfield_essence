@@ -144,6 +144,10 @@ class Matrixassistant:
     def load_weapon_csv(self):
         ws = []
         if not os.path.exists(self.csv_file):
+            # 添加更详细的调试信息
+            print(f"当前工作目录: {os.getcwd()}")
+            print(f"CSV文件路径: {self.csv_file}")
+            print(f"文件是否存在: {os.path.exists(self.csv_file)}")
             messagebox.showwarning("缺少必要文件", f"未检测到武器文件：{self.csv_file}\n请确保文件在程序根目录下！")
             return ws
         try:
@@ -388,11 +392,27 @@ class Matrixassistant:
     def is_already_locked_bg(self, window_img, lock_pos):
         try:
             lx, ly = int(lock_pos[0]), int(lock_pos[1])
-            search_scope = window_img[max(0, ly - 20):ly + 20, max(0, lx - 20):lx + 20]
+            # 4K屏幕下锁定图标实际大小为54×54，使用54作为检测区域大小
+            lock_size = 54
+            
+            # 计算检测区域，确保不超出图像边界
+            top = max(0, ly - lock_size//2)
+            bottom = min(window_img.shape[0], ly + lock_size//2)
+            left = max(0, lx - lock_size//2)
+            right = min(window_img.shape[1], lx + lock_size//2)
+            
+            search_scope = window_img[top:bottom, left:right]
+            
             gray = cv2.cvtColor(search_scope, cv2.COLOR_BGR2GRAY)
             _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
-            return (np.count_nonzero(binary) / binary.size) < 0.2
-        except:
+            
+            # 计算白色像素占比
+            white_ratio = np.count_nonzero(binary) / binary.size
+            # 如果白色像素占比小于20%，认为已锁定
+            return white_ratio < 0.2
+            
+        except Exception as e:
+            self.gui_log(f"[锁定检测异常] {e}", "red")
             return False
 
     def clean_text(self, raw):
@@ -571,7 +591,8 @@ class Matrixassistant:
     def __init__(self, root):
         self.root = root
         self.root.title("毕业基质自动识别工具beta v1.7 -by洁柔厨")
-        self.root.geometry("540x880");
+        # 修改窗口宽度，增加150像素
+        self.root.geometry("690x880")
         self.root.attributes("-topmost", True)
         try:
             myappid = 'jierouchu.matrix.assistant.v17'
@@ -581,53 +602,58 @@ class Matrixassistant:
         icon_path = resource_path(os.path.join("img", "jizhi.ico"))
         if os.path.exists(icon_path):
             try:
-                img = Image.open(icon_path);
+                img = Image.open(icon_path)
                 self.tk_icon = ImageTk.PhotoImage(img)
                 self.root.iconphoto(True, self.tk_icon)
             except:
                 pass
 
-        self.config_file, self.csv_file, self.corrections_file = "config.json", "weapon_data.csv", "Jiucuo.json"
+        # 修改：使用 resource_path 处理所有文件路径
+        self.config_file = resource_path("config.json")
+        self.csv_file = resource_path("weapon_data.csv")
+        self.corrections_file = resource_path("Jiucuo.json")
+        
         try:
-            self.ocr = RapidOCR(intra_op_num_threads=4); self.cc = OpenCC('t2s')
+            self.ocr = RapidOCR(intra_op_num_threads=4)
+            self.cc = OpenCC('t2s')
         except Exception as e:
             messagebox.showerror("初始化失败", str(e))
 
-        self.running = False;
-        self.data = self.load_config();
-        self.weapon_list = self.load_weapon_csv();
+        self.running = False
+        self.data = self.load_config()
+        self.weapon_list = self.load_weapon_csv()
         self.corrections = self.load_corrections()
 
         # --- UI 颜色定义 ---
         MUTED_RED = "#B71C1C"  # 低饱和度红色
 
-        header = tk.Frame(root);
+        header = tk.Frame(root)
         header.pack(anchor="nw", padx=10, pady=5, fill="x")
-        lf = tk.Frame(header);
+        lf = tk.Frame(header)
         lf.pack(side="left", anchor="nw")
-        self.top_status_var = tk.StringVar();
+        self.top_status_var = tk.StringVar()
         self.update_config_status()
         tk.Label(lf, textvariable=self.top_status_var, font=("微软雅黑", 9), fg="green").pack(anchor="w")
         tk.Button(lf, text="添加错字纠正", command=self.add_correction_popup, font=("微软雅黑", 8), bg="#F5F5F5",
                   padx=2, pady=0).pack(anchor="w", pady=(2, 0))
         tk.Button(lf, text="修改武器数据", command=self.edit_weapon_popup, font=("微软雅黑", 8), bg="#F5F5F5", padx=2,
                   pady=0).pack(anchor="w", pady=(2, 0))
-        self.debug_gold_var = tk.BooleanVar(value=False);
+        self.debug_gold_var = tk.BooleanVar(value=False)
         tk.Checkbutton(lf, text="关闭金色识别", variable=self.debug_gold_var, font=("微软雅黑", 8)).pack(anchor="w",
                                                                                                          pady=(2, 0))
 
         # --- 修改：rf 设置 padx 增加间距使按钮右移 ---
-        rf = tk.Frame(header);
+        rf = tk.Frame(header)
         rf.pack(side="left", anchor="nw", padx=(35, 0))
-        r1 = tk.Frame(rf);
+        r1 = tk.Frame(rf)
         r1.pack(anchor="w")
         tk.Label(r1, text="| 速度:").pack(side="left")
-        self.speed_var = tk.StringVar(value=self.data.get("speed", "0.2"));
+        self.speed_var = tk.StringVar(value=self.data.get("speed", "0.2"))
         tk.Entry(r1, textvariable=self.speed_var, width=5).pack(side="left", padx=0)
         tk.Label(r1, text=" | 翻页距离:").pack(side="left")
-        self.dist_var = tk.StringVar(value=self.data.get("scroll_pixel_dist", "90"));
+        self.dist_var = tk.StringVar(value=self.data.get("scroll_pixel_dist", "90"))
         tk.Entry(r1, textvariable=self.dist_var, width=5).pack(side="left", padx=0)
-        r2 = tk.Frame(rf);
+        r2 = tk.Frame(rf)
         r2.pack(anchor="w", pady=(2, 0))
         tk.Label(r2, text="推荐 0.2-0.5", font=("微软雅黑", 8), fg="#888888").pack(side="left", padx=(0, 0))
         tk.Label(r2, text="1080p推荐90 2k推荐140", font=("微软雅黑", 8), fg="#888888").pack(side="left", padx=(5, 0))
@@ -639,7 +665,7 @@ class Matrixassistant:
         tk.Label(rf, text="（开始扫描后，按 'B' 键可停止）", font=("微软雅黑", 9), fg=MUTED_RED).pack(
             anchor="center")
 
-        mid = tk.Frame(root);
+        mid = tk.Frame(root)
         mid.pack(pady=5)
         tk.Button(mid, text="基质框选", command=self.set_matrix_roi, width=12).grid(row=0, column=0, padx=5, pady=5)
         tk.Button(mid, text="框选识别区", command=self.set_roi, width=12).grid(row=0, column=1, padx=5, pady=5)
@@ -647,19 +673,19 @@ class Matrixassistant:
         tk.Button(mid, text="校准锁定键", command=self.set_lock, width=12).grid(row=1, column=1, padx=5, pady=5)
 
         tk.Label(root, text="实时日志:", font=("微软雅黑", 11, "bold")).pack(anchor="w", padx=10)
-        self.log_area = scrolledtext.ScrolledText(root, height=10, width=60, font=("微软雅黑", 12));
+        self.log_area = scrolledtext.ScrolledText(root, height=10, width=60, font=("微软雅黑", 12))
         self.log_area.pack(padx=10, pady=5)
         for t, c in [("black", "black"), ("green", "#2E7D32"), ("gold", "#FF9800"), ("red", "#B71C1C"),
                      ("blue", "blue")]: self.log_area.tag_config(t, foreground=c)
 
         # --- 修改：已锁定列表标题设为低饱和度红色 ---
         tk.Label(root, text="已锁定列表:", font=("微软雅黑", 11, "bold"), fg=MUTED_RED).pack(anchor="w", padx=10)
-        self.lock_list_area = scrolledtext.ScrolledText(root, height=8, width=60, font=("微软雅黑", 12), bg="#F9F9F9");
+        self.lock_list_area = scrolledtext.ScrolledText(root, height=8, width=60, font=("微软雅黑", 12), bg="#F9F9F9")
         self.lock_list_area.pack(padx=10, pady=5, fill="x")
         for t, c in [("red_text", "#B71C1C"), ("gold_text", "#FF9800"), ("green_text", "#2E7D32"),
                      ("black_text", "black")]: self.lock_list_area.tag_config(t, foreground=c)
 
-        self.kb = keyboard.Listener(on_press=self.on_press);
+        self.kb = keyboard.Listener(on_press=self.on_press)
         self.kb.start()
         tk.Label(root, text="群号: 1006580737\n本工具完全免费", font=("微软雅黑", 9, "bold"), fg="#FF5722",
                  justify="right").place(relx=1.0, x=-10, y=10, anchor="ne")
@@ -674,6 +700,6 @@ if __name__ == "__main__":
             messagebox.showerror("运行错误", "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
 
 
-        sys.excepthook = handle_exception;
-        app = Matrixassistant(root);
+        sys.excepthook = handle_exception
+        app = Matrixassistant(root)
         root.mainloop()
