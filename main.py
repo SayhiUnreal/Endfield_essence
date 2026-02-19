@@ -6,8 +6,9 @@
 核心功能：
 1. 自动识别游戏中的毕业基质
 2. 自动锁定符合条件的基质
-3. 支持多显示器环境
-4. 后台截图识别（窗口被遮挡也能工作）
+3. 自动弃置不符合条件的基质
+4. 支持多显示器环境
+5. 后台截图识别（窗口被遮挡也能工作）
 
 技术原理：
 - 使用 win32gui 进行后台截图
@@ -392,7 +393,8 @@ class Matrixassistant:
         return {
             "roi": None, 
             "grid": None, 
-            "lock": None, 
+            "lock": None,
+            "discard": None,  # 新增：弃置按钮位置
             "matrix_size": None, 
             "speed": "0.2", 
             "scroll_pixel_dist": "90"
@@ -457,7 +459,7 @@ class Matrixassistant:
         """
         更新配置状态显示
         """
-        ready = all(self.data.get(k) is not None for k in ["roi", "grid", "lock", "matrix_size"])
+        ready = all(self.data.get(k) is not None for k in ["roi", "grid", "lock", "discard", "matrix_size"])
         if hasattr(self, 'top_status_var'): 
             self.top_status_var.set("✅ 配置已就绪" if ready else "❌ 配置不全")
 
@@ -518,7 +520,7 @@ class Matrixassistant:
         tk.Button(lf, text="修改武器数据", command=self.edit_weapon_popup, 
                  font=("微软雅黑", 8), bg="#F5F5F5", padx=2, pady=0).pack(anchor="w", pady=(2, 0))
         
-        # 修改为"仅扫描金色基质"，默认为勾选
+        # 仅扫描金色基质选项
         self.gold_only_var = tk.BooleanVar(value=True)  # 默认勾选
         tk.Checkbutton(lf, text="仅扫描金色基质", variable=self.gold_only_var, 
                       font=("微软雅黑", 8)).pack(anchor="w", pady=(2, 0))
@@ -552,10 +554,14 @@ class Matrixassistant:
         mid = tk.Frame(self.root)
         mid.pack(pady=5)
         
+        # 第一行配置按钮
         tk.Button(mid, text="基质框选", command=self.set_matrix_roi, width=12).grid(row=0, column=0, padx=5, pady=5)
         tk.Button(mid, text="框选识别区", command=self.set_roi, width=12).grid(row=0, column=1, padx=5, pady=5)
         tk.Button(mid, text="校准网格", command=self.set_grid, width=12).grid(row=1, column=0, padx=5, pady=5)
         tk.Button(mid, text="校准锁定键", command=self.set_lock, width=12).grid(row=1, column=1, padx=5, pady=5)
+        
+        # 第二行新增的校准弃置按钮
+        tk.Button(mid, text="校准弃置", command=self.set_discard, width=12, bg="#FF9800", fg="white").grid(row=2, column=0, columnspan=2, padx=5, pady=5)
 
         # === 实时日志区域 ===
         tk.Label(self.root, text="实时日志:", font=("微软雅黑", 11, "bold")).pack(anchor="w", padx=10)
@@ -564,7 +570,7 @@ class Matrixassistant:
         
         # 配置日志颜色标签
         for t, c in [("black", "black"), ("green", GREEN), ("gold", GOLD), 
-                     ("red", MUTED_RED), ("blue", "blue")]: 
+                     ("red", MUTED_RED), ("blue", "blue"), ("orange", "#FF9800")]: 
             self.log_area.tag_config(t, foreground=c)
 
         # === 已锁定列表区域 ===
@@ -575,7 +581,7 @@ class Matrixassistant:
         
         # 配置列表颜色标签
         for t, c in [("red_text", MUTED_RED), ("gold_text", GOLD), 
-                     ("green_text", GREEN), ("black_text", "black")]: 
+                     ("green_text", GREEN), ("black_text", "black"), ("orange_text", "#FF9800")]: 
             self.lock_list_area.tag_config(t, foreground=c)
 
     # ==================== 配置校准功能 ====================
@@ -722,6 +728,34 @@ class Matrixassistant:
         print(f"相对坐标: ({rel_x}, {rel_y})")
         
         self.data.update({"lock": (rel_x, rel_y)})
+        self.save_config()
+
+    def set_discard(self):
+        """
+        校准弃置键功能
+        
+        让用户点击游戏中弃置图标的中心位置
+        """
+        self.get_click("点击弃置图标中心", self._handle_discard_selection, None)
+
+    def _handle_discard_selection(self, rx, ry):
+        """
+        处理弃置键校准结果
+        
+        原理：将屏幕绝对坐标转换为相对于游戏窗口的坐标
+        
+        Args:
+            rx, ry: 点击位置的屏幕绝对坐标
+        """
+        print(f"弃置图标屏幕坐标: ({rx}, {ry})")
+        game_pos = self.get_game_window_rect()
+        print(f"游戏窗口左上角: {game_pos}")
+        
+        rel_x = rx - game_pos[0] if game_pos else rx
+        rel_y = ry - game_pos[1] if game_pos else ry
+        print(f"相对坐标: ({rel_x}, {rel_y})")
+        
+        self.data.update({"discard": (rel_x, rel_y)})
         self.save_config()
 
     def get_click(self, prompt, callback, img_name=None):
@@ -1073,7 +1107,7 @@ class Matrixassistant:
         except:
             return False
 
-    def is_already_locked_bg(self, window_img, lock_pos):
+    def is_already_locked(self, window_img, pos):
         """
         检查基质是否已经锁定
         
@@ -1081,21 +1115,21 @@ class Matrixassistant:
         
         Args:
             window_img: 游戏窗口截图
-            lock_pos: 锁定图标位置（相对游戏窗口的坐标）
+            pos: 图标位置（相对游戏窗口的坐标）
             
         Returns:
             True: 已锁定
             False: 未锁定
         """
         try:
-            lx, ly = int(lock_pos[0]), int(lock_pos[1])
-            lock_size = 54  # 4K屏幕下锁定图标大小
+            lx, ly = int(pos[0]), int(pos[1])
+            icon_size = 54  # 4K屏幕下图标大小
             
             # 计算检测区域
-            top = max(0, ly - lock_size//2)
-            bottom = min(window_img.shape[0], ly + lock_size//2)
-            left = max(0, lx - lock_size//2)
-            right = min(window_img.shape[1], lx + lock_size//2)
+            top = max(0, ly - icon_size//2)
+            bottom = min(window_img.shape[0], ly + icon_size//2)
+            left = max(0, lx - icon_size//2)
+            right = min(window_img.shape[1], lx + icon_size//2)
             
             search_scope = window_img[top:bottom, left:right]
             
@@ -1105,11 +1139,11 @@ class Matrixassistant:
             
             # 计算白色像素占比
             white_ratio = np.count_nonzero(binary) / binary.size
-            # 白色像素少说明已锁定
+            # 白色像素少说明已操作
             return white_ratio < 0.2
             
         except Exception as e:
-            self.gui_log(f"[锁定检测异常] {e}", "red")
+            self.gui_log(f"[状态检测异常] {e}", "red")
             return False
 
     # ==================== 文字识别与处理 ====================
@@ -1207,7 +1241,7 @@ class Matrixassistant:
         
         检查配置是否完整，然后在后台线程中运行扫描任务
         """
-        if not all(self.data.get(k) is not None for k in ["roi", "grid", "lock", "matrix_size"]):
+        if not all(self.data.get(k) is not None for k in ["roi", "grid", "lock", "discard", "matrix_size"]):
             messagebox.showwarning("提示", "首次运行请完成配置")
             return
         
@@ -1231,12 +1265,14 @@ class Matrixassistant:
         3. 对每个位置判断是否为金色（如果启用了仅扫描金色）
         4. 点击基质并截图识别词条
         5. 如果匹配武器库且未锁定，点击锁定
-        6. 翻页继续扫描
+        6. 如果不匹配武器库且未弃置，点击弃置
+        7. 翻页继续扫描
         """
         try:
             roi = self.data["roi"]
             grid = self.data["grid"]
             lock = self.data["lock"]
+            discard = self.data["discard"]
             ms = self.data.get("matrix_size", (100, 100))
             
             hwnd = win32gui.FindWindow(None, 'Endfield') or win32gui.FindWindow(None, '终末地')
@@ -1274,9 +1310,6 @@ class Matrixassistant:
                         self.running = False
                         break
                     
-                    # 开始检查这个基质
-                    self.gui_log(f"--- 检查: {curr_row + 1}-{c + 1} ---")
-                    
                     # 获取游戏窗口位置
                     wr = self.get_game_window_rect()
                     if not wr:
@@ -1295,37 +1328,54 @@ class Matrixassistant:
                     ]
                     
                     # OCR识别
-                    # 先转为灰度图并放大1.5倍以提高识别率
                     gray = cv2.cvtColor(o_img, cv2.COLOR_BGR2GRAY)
                     enlarged = cv2.resize(gray, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_NEAREST)
                     res, _ = self.ocr(cv2.cvtColor(enlarged, cv2.COLOR_GRAY2BGR))
                     
                     ft = "，".join([line[1] for line in res]) if res else ""
                     
+                    # 准备日志信息
+                    log_parts = [f"[{curr_row + 1}-{c + 1}]"]
+                    
                     if ft:
                         cleaned_text = self.clean_text(ft)
-                        self.gui_log(f"识别结果: {cleaned_text}", "green")
+                        log_parts.append(f"识别: {cleaned_text}")
                         
                         # 检查是否匹配武器库
                         matches = [w for w in self.weapon_list if self.check_all_attributes(w, ft)]
                         
                         if matches:
-                            self.gui_log("检测到毕业基质！", "gold")
+                            log_parts.append("✅ 毕业基质")
                             
                             # 检查是否已锁定
-                            if self.is_already_locked_bg(scr, lock):
-                                self.gui_log("该基质已锁定，跳过", "red")
+                            if self.is_already_locked(scr, lock):
+                                log_parts.append("已锁定")
                             else:
                                 # 点击锁定
                                 pydirectinput.click(int(wr[0] + lock[0]), int(wr[1] + lock[1]))
-                                self.gui_log("-> 已执行锁定指令", "blue")
-                                time.sleep(0.4)
-                                pydirectinput.moveRel(50, 50)  # 移动鼠标避免重复点击
+                                log_parts.append("执行锁定")
+                                time.sleep(0.2)
+                                pydirectinput.moveRel(50, 50)
                             
                             # 记录到已锁定列表
                             self.add_to_lock_list(matches, f"{curr_row + 1}-{c + 1}")
+                        else:
+                            log_parts.append("❌ 非毕业")
+                            
+                            # 检查是否已弃置
+                            if self.is_already_locked(scr, discard):
+                                log_parts.append("已弃置")
+                            else:
+                                # 点击弃置
+                                pydirectinput.click(int(wr[0] + discard[0]), int(wr[1] + discard[1]))
+                                log_parts.append("执行弃置")
+                                time.sleep(0.2)
+                                pydirectinput.moveRel(50, 50)
                     else:
-                        self.gui_log("-> 未读到词条")
+                        log_parts.append("识别失败")
+                    
+                    # 输出合并后的日志
+                    self.gui_log(" ".join(log_parts), "black")
                 
                 if not self.running:
                     break

@@ -24,9 +24,13 @@
         571
     ],
     "matrix_size": [
-        328,
-        323
+        317,
+        314
     ],
     "speed": "0.2",
-    "scroll_pixel_dist": "140"
+    "scroll_pixel_dist": "140",
+    "discard": [
+        3613,
+        571
+    ]
 }
