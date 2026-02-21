@@ -1,36 +1,45 @@
 {
     "roi": [
-        3019,
-        722,
-        320,
-        273
+        3024,
+        723,
+        294,
+        272
     ],
     "grid": {
         "p11": [
-            277,
-            392
-        ],
-        "p12": [
-            587,
+            266,
             394
         ],
-        "rx": 277,
-        "ry": 392,
-        "rdx": 310,
-        "rdy": 308
+        "p12": [
+            577,
+            398
+        ],
+        "rx": 266,
+        "ry": 394,
+        "rdx": 311,
+        "rdy": 307
     },
     "lock": [
-        3683,
+        3681,
         571
     ],
     "matrix_size": [
-        317,
-        314
+        315,
+        312
     ],
     "speed": "0.3",
     "scroll_pixel_dist": "140",
     "discard": [
         3613,
-        571
-    ]
+        572
+    ],
+    "hall_order": {
+        "roi": null,
+        "order_button": null,
+        "refresh_button": null
+    },
+    "djh_transport": {
+        "pickup_points": [],
+        "delivery_points": []
+    }
 }
