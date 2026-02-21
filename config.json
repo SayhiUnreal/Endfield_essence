@@ -40,6 +40,29 @@
     },
     "djh_transport": {
         "pickup_points": [],
-        "delivery_points": []
+        "delivery_points": [],
+        "switch_button": [
+            1933,
+            418
+        ],
+        "popup_roi": [
+            1765,
+            847,
+            295,
+            495
+        ],
+        "switch_delay": "1.0",
+        "ctrl_hold": "0.5",
+        "click_interval": "0.5",
+        "fill_wait": "0.5",
+        "deposit_button": [
+            2622,
+            1555
+        ],
+        "confirm_button": [
+            3047,
+            1742
+        ],
+        "confirm_wait": "2.5"
     }
 }
