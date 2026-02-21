@@ -35,11 +35,15 @@ class ClickHelper:
             clicks: 点击次数
             interval: 点击间隔
         """
+        # 每次点击都重新获取窗口位置，确保坐标准确
         window_rect = self.game_window.get_window_rect()
         if window_rect:
             screen_x = window_rect[0] + x
             screen_y = window_rect[1] + y
             self.click_absolute(screen_x, screen_y, button, clicks, interval)
+        else:
+            if self.logger:
+                self.logger.log("无法获取窗口位置，点击失败", "red")
     
     def click_absolute(self, x, y, button='left', clicks=1, interval=0.0):
         """

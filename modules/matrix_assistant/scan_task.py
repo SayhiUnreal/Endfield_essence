@@ -86,10 +86,10 @@ class ScanTask:
                 speed = float(self.module.ui.speed_var.get() or 0.3)
                 scroll_dist = int(self.module.ui.dist_var.get() or 200)
                 
-                # 截图
-                window_img = self.module.screenshot.capture_window()
-                if window_img is None:
-                    self.module.logger.log("截图失败", "red")
+                # 获取游戏窗口位置（每次循环都重新获取，确保位置正确）
+                window_rect = self.module.game_window.get_window_rect()
+                if not window_rect:
+                    self.module.logger.log("无法获取游戏窗口位置", "red")
                     break
                 
                 self.module.logger.log(f"========== 开始扫描第 {current_row + 1} 行 (第 {scan_round} 轮) ==========", "black")
@@ -107,9 +107,15 @@ class ScanTask:
                     if last_position is not None:
                         self.module.logger.log("", "black")  # 空行
                     
-                    # 计算坐标
+                    # 计算坐标（相对窗口）
                     rx = int(grid["rx"] + col * grid["rdx"])
                     ry = int(grid["ry"] + min(current_row, 4) * grid["rdy"])
+                    
+                    # 截图用于金色判断
+                    window_img = self.module.screenshot.capture_window()
+                    if window_img is None:
+                        self.module.logger.log("截图失败", "red")
+                        break
                     
                     # 检查金色
                     if self.module.ui.gold_only_var.get():
@@ -129,6 +135,7 @@ class ScanTask:
                         break
                     
                     time.sleep(0.1)
+                    # 点击基质（使用相对坐标）
                     self.module.click.click_relative(rx, ry)
                     
                     # 等待展开
@@ -138,6 +145,7 @@ class ScanTask:
                     if self.stop_requested:
                         break
                     
+                    # 截图识别区域
                     region = self.module.screenshot.capture_region(
                         int(roi[0]), int(roi[1]), int(roi[2]), int(roi[3])
                     )
@@ -149,6 +157,7 @@ class ScanTask:
                         
                         # 检查匹配
                         matched = False
+                        matched_weapon = None
                         for weapon in self.module.weapon_list:
                             if self.stop_requested:
                                 break
@@ -156,18 +165,28 @@ class ScanTask:
                             is_match, _, _ = self.module.ocr.match_attributes(attrs, text)
                             if is_match:
                                 matched = True
+                                matched_weapon = weapon
                                 self._handle_match(weapon, current_position)
                                 break
                         
+                        # 重新截图用于判断操作状态（关键修改：每次操作前重新截图）
+                        if not self.stop_requested:
+                            current_window_img = self.module.screenshot.capture_window()
+                            if current_window_img is None:
+                                self.module.logger.log("截图失败", "red")
+                                break
+                        
                         if matched and not self.stop_requested:
-                            if not is_operated(window_img, lock):
+                            # 使用最新的截图判断锁定状态
+                            if not is_operated(current_window_img, lock):
                                 self.module.click.click_relative(lock[0], lock[1])
                                 self.module.logger.log(f"[{current_position}] ✅ 锁定毕业基质", "green")
                                 operation_performed = True
                             else:
                                 self.module.logger.log(f"[{current_position}] 🔒 已锁定", "blue")
                         elif not self.stop_requested:
-                            if not is_operated(window_img, discard):
+                            # 使用最新的截图判断弃置状态
+                            if not is_operated(current_window_img, discard):
                                 self.module.click.click_relative(discard[0], discard[1])
                                 self.module.logger.log(f"[{current_position}] ❌ 弃置非毕业", "orange")
                                 operation_performed = True

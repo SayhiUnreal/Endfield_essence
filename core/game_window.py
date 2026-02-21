@@ -75,15 +75,24 @@ class GameWindow:
     
     def get_window_rect(self):
         """
-        获取窗口位置
+        获取窗口位置（实时获取，不使用缓存）
         
         Returns:
             (left, top, right, bottom) 或 None
         """
         if self.hwnd:
             try:
+                # 每次调用都重新获取，确保是最新位置
                 return win32gui.GetWindowRect(self.hwnd)
             except:
+                # 如果获取失败，尝试重新查找窗口
+                if self.logger:
+                    self.logger.log("获取窗口位置失败，尝试重新查找", "orange")
+                if self.find_window():
+                    try:
+                        return win32gui.GetWindowRect(self.hwnd)
+                    except:
+                        pass
                 return None
         return None
     
